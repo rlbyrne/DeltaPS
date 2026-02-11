@@ -76,47 +76,40 @@ def frequency_ft_weighting(
         for u_ind in range(Nu):
             for v_ind in range(Nv):
                 for pol_ind in range(Npols):
+                    visibilities_binned_onecoord = visibilities_binned[
+                        u_ind : u_ind + 1,
+                        v_ind : v_ind + 1,
+                        :,
+                        pol_ind : pol_ind + 1,
+                    ]
+                    weights_onecoord = weights[
+                        u_ind : u_ind + 1,
+                        v_ind : v_ind + 1,
+                        :,
+                        pol_ind : pol_ind + 1,
+                    ]
                     if (
-                        np.max(np.abs(np.diff(weights[u_ind, v_ind, :, pol_ind]))) == 0
+                        np.max(np.abs(np.diff(weights_onecoord.flatten()))) == 0
                     ):  # Weights are uniform across frequency
-                        visibilities_ft[
-                            u_ind : u_ind + 1,
-                            v_ind : v_ind + 1,
-                            :,
-                            pol_ind : pol_ind + 1,
-                        ] = frequency_ft_no_weighting(
-                            visibilities_binned[
-                                u_ind : u_ind + 1,
-                                v_ind : v_ind + 1,
-                                :,
-                                pol_ind : pol_ind + 1,
-                            ],
+                        visibilities_ft_onecoord = frequency_ft_no_weighting(
+                            visibilities_binned_onecoord,
                             delay_axis,
                             freq_array[0],
                         )
                     else:  # Recursion babyyy
-                        visibilities_ft[
-                            u_ind : u_ind + 1,
-                            v_ind : v_ind + 1,
-                            :,
-                            pol_ind : pol_ind + 1,
-                        ] = frequency_ft_weighting(
-                            visibilities_binned[
-                                u_ind : u_ind + 1,
-                                v_ind : v_ind + 1,
-                                :,
-                                pol_ind : pol_ind + 1,
-                            ],
-                            weights[
-                                u_ind : u_ind + 1,
-                                v_ind : v_ind + 1,
-                                :,
-                                pol_ind : pol_ind + 1,
-                            ],
+                        visibilities_ft_onecoord = frequency_ft_weighting(
+                            visibilities_binned_onecoord,
+                            weights_onecoord,
                             freq_array,
                             delay_axis,
                             memory_save=False,
                         )
+                    visibilities_ft[
+                        u_ind : u_ind + 1,
+                        v_ind : v_ind + 1,
+                        :,
+                        pol_ind : pol_ind + 1,
+                    ] = visibilities_ft_onecoord
     else:
         weighted_visibilities = weights * visibilities_binned
         vis_ft = np.nansum(
@@ -196,9 +189,14 @@ def calculate_ps(
     )
 
     delay_axis = np.fft.fftshift(np.fft.fftfreq(uv.Nfreqs, d=np.mean(uv.channel_width)))
-    visibilities_ft = frequency_ft_no_weighting(
-        visibilities_binned, delay_axis, uv.freq_array[0]
-    )
+    if use_freq_flags:
+        visibilities_ft = frequency_ft_weighting(
+            visibilities_binned, weights, uv.freq_array, delay_axis, memory_save=True
+        )
+    else:
+        visibilities_ft = frequency_ft_no_weighting(
+            visibilities_binned, delay_axis, uv.freq_array[0]
+        )
 
     u_bin_centers = (u_bin_edges[:-1] + u_bin_edges[1:]) / 2
     v_bin_centers = (v_bin_edges[:-1] + v_bin_edges[1:]) / 2
