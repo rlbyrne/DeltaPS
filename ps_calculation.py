@@ -45,6 +45,73 @@ def bin_visibilities(uv, uv_resolution_wl=0.5, c=3e8):
     return visibilities_binned, weights, u_bin_edges, v_bin_edges
 
 
+def frequency_ft_no_weighting(visibilities_binned, delay_axis, freq_start_hz):
+    # Assume uniform weights across frequency and no frequency-dependent flagging
+
+    visibilities_ft = np.fft.fftshift(
+        np.fft.fft(visibilities_binned, axis=2), axes=2
+    )  # Fourier transform across frequency axis
+    visibilities_ft *= np.exp(
+        -2
+        * np.pi
+        * 1j
+        * freq_start_hz
+        * delay_axis[np.newaxis, np.newaxis, :, np.newaxis]
+    )  # Add phasor when the minimum frequency is not zero
+    visibilities_ft /= len(delay_axis)  # Normalize
+    return visibilities_ft
+
+
+def frequency_ft_weighting(
+    visibilities_binned,  # Shape (Nu, Nv, Nfreqs, Npols)
+    weights,  # Shape (Nu, Nv, Nfreqs, Npols)
+    freq_array,  # Shape (Nfreqs)
+    delay_axis,  # Shape (Nfreqs)
+):
+
+    weighted_visibilities = weights * visibilities_binned
+    vis_ft = np.nansum(
+        weighted_visibilities[:, :, :, :, np.newaxis]
+        * np.exp(
+            -2
+            * np.pi
+            * 1j
+            * delay_axis[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+            * freq_array[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis]
+        ),
+        axis=2,
+    )  # Shape (Nu, Nv, Npols, Nfreqs)
+    measurement_mat = np.nansum(
+        weights[:, :, :, :, np.newaxis, np.newaxis]
+        * np.exp(
+            -2
+            * np.pi
+            * 1j
+            * (
+                delay_axis[
+                    np.newaxis, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis
+                ]
+                - delay_axis[
+                    np.newaxis, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :
+                ]
+            )
+            * freq_array[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
+        ),
+        axis=2,
+    )  # Shape (Nu, Nv, Npols, Nfreqs, Nfreqs)
+    measurement_mat_inv = np.linalg.inv(measurement_mat)
+
+    visibilities_ft = np.einsum(
+        "...ij, ...j -> ...i", measurement_mat_inv, vis_ft
+    )  # Shape (Nu, Nv, Npols, Nfreqs)
+    visibilities_ft = np.transpose(
+        visibilities_ft, axes=(0, 1, 3, 2)
+    )  # Shape (Nu, Nv, Nfreqs, Npols)
+
+    return visibilities_ft
+    # return np.transpose(vis_ft, axes=(0, 1, 3, 2))
+
+
 def calculate_ps(
     filepath,
     delay_ps=True,
@@ -82,10 +149,10 @@ def calculate_ps(
         uv, uv_resolution_wl=uv_resolution_wl
     )
 
-    visibilities_ft = np.fft.ifft(
-        visibilities_binned, axis=2
-    )  # Fourier transform across frequency
     delay_axis = np.fft.fftshift(np.fft.fftfreq(uv.Nfreqs, d=np.mean(uv.channel_width)))
+    visibilities_ft = frequency_ft_no_weighting(
+        visibilities_binned, delay_axis, uv.freq_array[0]
+    )
 
     u_bin_centers = (u_bin_edges[:-1] + u_bin_edges[1:]) / 2
     v_bin_centers = (v_bin_edges[:-1] + v_bin_edges[1:]) / 2
