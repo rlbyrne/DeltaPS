@@ -67,49 +67,99 @@ def frequency_ft_weighting(
     weights,  # Shape (Nu, Nv, Nfreqs, Npols)
     freq_array,  # Shape (Nfreqs)
     delay_axis,  # Shape (Nfreqs)
+    memory_save=False,
 ):
 
-    weighted_visibilities = weights * visibilities_binned
-    vis_ft = np.nansum(
-        weighted_visibilities[:, :, :, :, np.newaxis]
-        * np.exp(
-            -2
-            * np.pi
-            * 1j
-            * delay_axis[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
-            * freq_array[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis]
-        ),
-        axis=2,
-    )  # Shape (Nu, Nv, Npols, Nfreqs)
-    measurement_mat = np.nansum(
-        weights[:, :, :, :, np.newaxis, np.newaxis]
-        * np.exp(
-            -2
-            * np.pi
-            * 1j
-            * (
-                delay_axis[
-                    np.newaxis, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis
+    if memory_save:  # Iterate over uv cells and polarizations
+        (Nu, Nv, Nfreqs, Npols) = np.shape(visibilities_binned)
+        visibilities_ft = np.zeros((Nu, Nv, Nfreqs, Npols), dtype=complex)
+        for u_ind in range(Nu):
+            for v_ind in range(Nv):
+                for pol_ind in range(Npols):
+                    if (
+                        np.max(np.abs(np.diff(weights[u_ind, v_ind, :, pol_ind]))) == 0
+                    ):  # Weights are uniform across frequency
+                        visibilities_ft[
+                            u_ind : u_ind + 1,
+                            v_ind : v_ind + 1,
+                            :,
+                            pol_ind : pol_ind + 1,
+                        ] = frequency_ft_no_weighting(
+                            visibilities_binned[
+                                u_ind : u_ind + 1,
+                                v_ind : v_ind + 1,
+                                :,
+                                pol_ind : pol_ind + 1,
+                            ],
+                            delay_axis,
+                            freq_array[0],
+                        )
+                    else:  # Recursion babyyy
+                        visibilities_ft[
+                            u_ind : u_ind + 1,
+                            v_ind : v_ind + 1,
+                            :,
+                            pol_ind : pol_ind + 1,
+                        ] = frequency_ft_weighting(
+                            visibilities_binned[
+                                u_ind : u_ind + 1,
+                                v_ind : v_ind + 1,
+                                :,
+                                pol_ind : pol_ind + 1,
+                            ],
+                            weights[
+                                u_ind : u_ind + 1,
+                                v_ind : v_ind + 1,
+                                :,
+                                pol_ind : pol_ind + 1,
+                            ],
+                            freq_array,
+                            delay_axis,
+                            memory_save=False,
+                        )
+    else:
+        weighted_visibilities = weights * visibilities_binned
+        vis_ft = np.nansum(
+            weighted_visibilities[:, :, :, :, np.newaxis]
+            * np.exp(
+                -2
+                * np.pi
+                * 1j
+                * delay_axis[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]
+                * freq_array[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis]
+            ),
+            axis=2,
+        )  # Shape (Nu, Nv, Npols, Nfreqs)
+        measurement_mat = np.nansum(
+            weights[:, :, :, :, np.newaxis, np.newaxis]
+            * np.exp(
+                -2
+                * np.pi
+                * 1j
+                * (
+                    delay_axis[
+                        np.newaxis, np.newaxis, np.newaxis, np.newaxis, :, np.newaxis
+                    ]
+                    - delay_axis[
+                        np.newaxis, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :
+                    ]
+                )
+                * freq_array[
+                    np.newaxis, np.newaxis, :, np.newaxis, np.newaxis, np.newaxis
                 ]
-                - delay_axis[
-                    np.newaxis, np.newaxis, np.newaxis, np.newaxis, np.newaxis, :
-                ]
-            )
-            * freq_array[np.newaxis, np.newaxis, :, np.newaxis, np.newaxis, np.newaxis]
-        ),
-        axis=2,
-    )  # Shape (Nu, Nv, Npols, Nfreqs, Nfreqs)
-    measurement_mat_inv = np.linalg.inv(measurement_mat)
+            ),
+            axis=2,
+        )  # Shape (Nu, Nv, Npols, Nfreqs, Nfreqs)
+        measurement_mat_inv = np.linalg.inv(measurement_mat)
 
-    visibilities_ft = np.einsum(
-        "...ij, ...j -> ...i", measurement_mat_inv, vis_ft
-    )  # Shape (Nu, Nv, Npols, Nfreqs)
-    visibilities_ft = np.transpose(
-        visibilities_ft, axes=(0, 1, 3, 2)
-    )  # Shape (Nu, Nv, Nfreqs, Npols)
+        visibilities_ft = np.einsum(
+            "...ij, ...j -> ...i", measurement_mat_inv, vis_ft
+        )  # Shape (Nu, Nv, Npols, Nfreqs)
+        visibilities_ft = np.transpose(
+            visibilities_ft, axes=(0, 1, 3, 2)
+        )  # Shape (Nu, Nv, Nfreqs, Npols)
 
     return visibilities_ft
-    # return np.transpose(vis_ft, axes=(0, 1, 3, 2))
 
 
 def calculate_ps(
@@ -128,10 +178,6 @@ def calculate_ps(
 
     if use_w_terms:
         print("ERROR: w-terms are not yet supported.")
-        sys.exit()
-
-    if use_freq_flags:
-        print("ERROR: Frequency-dependent flagging is not yet supported.")
         sys.exit()
 
     uv = pyuvdata.UVData()
@@ -182,6 +228,7 @@ def dft_visibilities(
     visibilities,
     uv_array_wls,
 ):
+    # Create diagnostic image
 
     n_pixels = int(
         np.ceil(2 * np.max(uv_array_wls) / 0.5)
